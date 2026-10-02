@@ -1,0 +1,2 @@
+# build output: attach to a GitHub release instead of committing
+*.plasmoid

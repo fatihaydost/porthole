@@ -1,0 +1,25 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "fatihaydostt@gmail.com",
+                "Name": "Fatih Aydost"
+            }
+        ],
+        "BugReportUrl": "https://github.com/fatihaydost/porthole/issues",
+        "Category": "Utilities",
+        "Description": "SSH port forwards from the system tray: switch tunnels on and off, they run as systemd user services",
+        "EnabledByDefault": true,
+        "Icon": "network-connect",
+        "Id": "io.github.fatihaydost.porthole",
+        "License": "MIT",
+        "Name": "Porthole",
+        "Version": "0.1.0",
+        "Website": "https://github.com/fatihaydost/porthole"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml",
+    "X-Plasma-NotificationArea": "true",
+    "X-Plasma-NotificationAreaCategory": "SystemServices"
+}

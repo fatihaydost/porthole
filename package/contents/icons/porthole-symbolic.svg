@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+  <style id="current-color-scheme" type="text/css">.ColorScheme-Text { color: #232629; }</style>
+  <!-- the porthole: a bolted round frame -->
+  <path class="ColorScheme-Text" fill="currentColor" fill-rule="evenodd" d="M11 1.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19zM11 4a7 7 0 1 1 0 14a7 7 0 1 1 0-14zM18.99 15.12a0.85 0.85 0 1 0 -1.7 0a0.85 0.85 0 1 0 1.7 0zM11.85 19.25a0.85 0.85 0 1 0 -1.7 0a0.85 0.85 0 1 0 1.7 0zM4.71 15.12a0.85 0.85 0 1 0 -1.7 0a0.85 0.85 0 1 0 1.7 0zM4.71 6.87a0.85 0.85 0 1 0 -1.7 0a0.85 0.85 0 1 0 1.7 0zM11.85 2.75a0.85 0.85 0 1 0 -1.7 0a0.85 0.85 0 1 0 1.7 0zM18.99 6.87a0.85 0.85 0 1 0 -1.7 0a0.85 0.85 0 1 0 1.7 0z"/>
+  <!-- a port forwarded through it -->
+  <path class="ColorScheme-Text" fill="currentColor" d="M6.75 10.25h4V7.75L14.75 11l-4 3.25v-2.5h-4z"/>
+</svg>
