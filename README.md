@@ -7,6 +7,7 @@
 **SSH port forwards from the KDE Plasma system tray. One switch per tunnel.**
 
 [![Release](https://img.shields.io/github/v/release/fatihaydost/porthole?label=release&color=1c74c2)](https://github.com/fatihaydost/porthole/releases/latest)
+[![KDE Store](https://img.shields.io/badge/KDE%20Store-get%20it-1d99f3?logo=kde&logoColor=white)](https://store.kde.org/p/2376816/)
 [![Plasma 6](https://img.shields.io/badge/Plasma-6-1d99f3?logo=kdeplasma&logoColor=white)](https://kde.org/plasma-desktop/)
 ![systemd user session](https://img.shields.io/badge/runs%20on-systemd%20user%20session-555555)
 [![License](https://img.shields.io/github/license/fatihaydost/porthole?color=4c1)](LICENSE)
@@ -71,6 +72,10 @@ It follows your colour scheme and accent colour:
   agent (see [SSH agent](#ssh-agent))
 
 ## Install
+
+**From the KDE Store.** Right-click the desktop → **Add Widgets…** → **Get New Widgets…** →
+**Download New Plasma Widgets**, and search for *Porthole*. It is also on the
+[KDE Store](https://store.kde.org/p/2376816/).
 
 **From a release.** Download `porthole.plasmoid` from
 [Releases](https://github.com/fatihaydost/porthole/releases), then:
