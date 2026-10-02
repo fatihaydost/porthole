@@ -112,8 +112,7 @@ and flip its switch.
 
 ## Configuration file
 
-Forwards are kept in `~/.config/porthole/forwards.json`. You can edit it by hand, and an
-Omarchy `port-forwards.json` can be copied over as is:
+Forwards are kept in `~/.config/porthole/forwards.json`. You can edit it by hand:
 
 ```json
 {
@@ -190,8 +189,6 @@ plasmoidviewer -a package
 `run-e2e.sh` needs `sshd`, `socat`, `curl` and PyQt6. It drives the widget's own QML
 through real tunnels and local servers, and stops only what it started.
 
-## Credits and license
+## License
 
-MIT, see [LICENSE](LICENSE). Porthole is a Plasma port of the Omarchy
-[port-forward plugin](https://github.com/omacom/omarchy-port-forward-plugin)
-by HeyOodle (MIT); the behaviour is the same, the interface is native Plasma.
+MIT, see [LICENSE](LICENSE).

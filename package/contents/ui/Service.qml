@@ -2,8 +2,7 @@ import QtQuick
 
 import "logic.js" as Logic
 
-// Headless controller. Port of omarchy-port-forward-plugin's Service.qml
-// (Copyright (c) 2026 HeyOodle, MIT) to Plasma 6.
+// Headless controller. Copyright notices: see LICENSE.
 //
 // Forwards are defined in ~/.config/porthole/forwards.json. Turning one on
 // starts `ssh -N -L …` inside a transient systemd user service

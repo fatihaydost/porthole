@@ -6,9 +6,7 @@
  * state. Nothing in here touches QML or i18n, so it can be unit tested with
  * node (see tests/logic.test.js).
  *
- * The behaviour follows omarchy-port-forward-plugin's Service.qml
- * (Copyright (c) 2026 HeyOodle, MIT): same ssh flags, same transient systemd
- * user units, same poll protocol and status rules.
+ * Copyright notices: see LICENSE.
  */
 
 var UNIT_PREFIX = "porthole-";
