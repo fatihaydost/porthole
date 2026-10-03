@@ -190,7 +190,7 @@ ssh-add
 
 ```bash
 node tests/logic.test.js   # 39 unit tests
-tests/run-e2e.sh           # 74 end-to-end steps against a throwaway sshd on 127.0.0.1:2222
+tests/run-e2e.sh           # 75 end-to-end steps against a throwaway sshd on 127.0.0.1:2222
 /usr/lib/qt6/bin/qmllint -I /usr/lib/qt6/qml package/contents/ui/*.qml
 plasmoidviewer -a package
 ```
