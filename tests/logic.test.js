@@ -582,10 +582,12 @@ test("bind address: the -L spec; without one, byte for byte the old spec", () =>
 test("bind address: conflict matrix", () => {
     const yes = [["", ""], ["", "localhost"], ["", "127.0.0.1"], ["", "::1"], ["", "[0:0::1]"], ["localhost", "127.0.0.1"],
         ["127.0.1.1", "127.0.1.1"], ["0.0.0.0", "127.0.1.1"], ["0.0.0.0", ""], ["0.0.0.0", "192.168.1.5"], ["0.0.0.0", "0.0.0.0"],
-        ["*", "::1"], ["*", "127.0.1.1"], ["*", ""], ["::", "127.0.1.1"], ["::", "::1"], ["::", ""], ["::", "0.0.0.0"], ["*", "::"],
-        ["fe80::1", "FE80:0:0:0:0:0:0:1"]];
+        ["*", "::1"], ["*", "127.0.1.1"], ["*", ""], ["::", "::1"], ["::", ""], ["::", "fe80::1"], ["::", "::"], ["*", "::"],
+        ["*", "0.0.0.0"], ["fe80::1", "FE80:0:0:0:0:0:0:1"]];
     const no = [["127.0.1.1", "127.0.1.2"], ["", "127.0.1.1"], ["localhost", "127.0.1.2"], ["", "192.168.1.5"],
-        ["0.0.0.0", "::1"], ["0.0.0.0", "fe80::1"], ["127.0.0.1", "::1"], ["::1", "fe80::1"], ["192.168.1.5", "10.0.0.1"]];
+        ["0.0.0.0", "::1"], ["0.0.0.0", "fe80::1"], ["127.0.0.1", "::1"], ["::1", "fe80::1"], ["192.168.1.5", "10.0.0.1"],
+        // ssh's IPv6 listeners are IPv6 only: [::]:P and 127.0.1.1:P bind side by side
+        ["::", "127.0.1.1"], ["::", "0.0.0.0"], ["::", "192.168.1.5"]];
     for (const [a, b] of yes) {
         assert.strictEqual(L.bindAddressesOverlap(a, b), true, a + " / " + b);
         assert.strictEqual(L.bindAddressesOverlap(b, a), true, b + " / " + a);
@@ -618,6 +620,16 @@ test("bind address: the shell's overlap check agrees with the JS one", () => {
             const js = b === "" ? L.listenAddressesOverlap(h, "127.0.0.1") || L.listenAddressesOverlap(h, "::1") : L.listenAddressesOverlap(h, b);
             assert.strictEqual(shell[i++], js ? "1" : "0", h + " vs " + JSON.stringify(b));
         }
+    // fixed answers too, so the two sides cannot share a mistake:
+    // [ss host, bind key, overlap]
+    const known = [["*", "127.0.1.1", 1], ["*", "::1", 1], ["::", "127.0.1.1", 0], ["::", "", 1], ["::", "::1", 1],
+        ["::", "0.0.0.0", 0], ["127.0.1.1", "::", 0], ["::1", "::", 1], ["0.0.0.0", "::1", 0], ["0.0.0.0", "127.0.1.1", 1],
+        ["0.0.0.0", "", 1], ["127.0.1.1", "", 0], ["::1", "", 1], ["127.0.1.2", "127.0.1.1", 0], ["192.168.1.5", "*", 1]];
+    for (const [h, b, want] of known) {
+        assert.strictEqual(bash(L.LISTEN_SHELL + "ov " + L.shellQuote(h) + " " + L.shellQuote(b) + " && echo 1 || echo 0").trim(), String(want), "shell " + h + " vs " + JSON.stringify(b));
+        const js = b === "" ? L.listenAddressesOverlap(h, "127.0.0.1") || L.listenAddressesOverlap(h, "::1") : L.listenAddressesOverlap(h, b);
+        assert.strictEqual(js ? 1 : 0, want, "js " + h + " vs " + JSON.stringify(b));
+    }
     // and lhost reads every ss address column shape
     const cols = { "127.0.0.1:5180": "127.0.0.1", "[::1]:631": "::1", "*:3000": "*", "[::]:22": "::", "127.0.0.53%lo:53": "127.0.0.53", "[fe80::1%wlan0]:22": "fe80::1" };
     for (const c in cols)
@@ -651,11 +663,17 @@ test("bind address: status per address, never mixed between tunnels on one port"
         // 5008: an IPv6 bind written long-hand, ss prints it short
         'LISTEN 0 128 [::1]:5008 [::]:* users:(("ssh",pid=108,fd=4))',
         'LISTEN 0 5 [::1]:5008 [::]:* users:(("python3",pid=905,fd=3))',
+        // 5009: a stranger on [::] (IPv6 only) does not reach 127.0.1.1
+        'LISTEN 0 511 [::]:5009 [::]:* users:(("nginx",pid=907,fd=6))',
+        'LISTEN 0 128 127.0.1.1:5009 0.0.0.0:* users:(("ssh",pid=109,fd=4))',
+        // 5010: a dual-stack stranger (*) reaches every address
+        'LISTEN 0 511 *:5010 *:* users:(("node",pid=908,fd=6))',
+        'LISTEN 0 128 127.0.1.1:5010 0.0.0.0:* users:(("ssh",pid=110,fd=4))',
         // 50010 must not be read as port 5001
         'LISTEN 0 5 127.0.1.1:50010 0.0.0.0:* users:(("python3",pid=906,fd=3))',
     ];
     fake("ss", "cat <<\"EOF\"\n" + ss.join("\n") + "\nEOF");
-    const pids = { a: 100, b: 101, c: 102, d: 103, e: 104, f: 105, g: 106, h: 107, k: 108, x: 0 };
+    const pids = { a: 100, b: 101, c: 102, d: 103, e: 104, f: 105, g: 106, h: 107, k: 108, l: 109, m: 110, x: 0 };
     let sc = 'u="${@: -1}"\ncase "$*" in\n*is-active*) echo active;;\n*InvocationID*) echo "inv-$u";;\n';
     for (const id in pids)
         sc += "*MainPID*porthole-" + id + ") echo " + pids[id] + ";;\n";
@@ -668,13 +686,14 @@ test("bind address: status per address, never mixed between tunnels on one port"
         { id: "e", localPort: 5003, bindAddress: "127.0.1.5" }, { id: "f", localPort: 5003, bindAddress: "::1" },
         { id: "g", localPort: 5005 }, { id: "h", localPort: 5006, bindAddress: "" },
         { id: "k", localPort: 5008, bindAddress: "0:0:0:0:0:0:0:1" },
+        { id: "l", localPort: 5009, bindAddress: "127.0.1.1" }, { id: "m", localPort: 5010, bindAddress: "127.0.1.1" },
         // nothing of its own listening; strangers elsewhere on the port do not make it active
         { id: "x", localPort: 5001, bindAddress: "127.0.1.9" }];
     const p = L.parsePoll(bash(L.pollScript(fw, {}), { PATH: fakeBin + ":/usr/bin" }));
     const got = {};
     p.rows.forEach(r => { got[r.id] = r.listen; });
-    assert.deepStrictEqual(got, { a: "yes", b: "yes", c: "shared", d: "yes", e: "shared", f: "yes", g: "yes", h: "shared", k: "shared", x: "no" });
-    assert.strictEqual(L.deriveStatus(p.rows[9]), "connecting");
+    assert.deepStrictEqual(got, { a: "yes", b: "yes", c: "shared", d: "yes", e: "shared", f: "yes", g: "yes", h: "shared", k: "shared", l: "yes", m: "shared", x: "no" });
+    assert.strictEqual(L.deriveStatus(p.rows[11]), "connecting");
     fs.rmSync(fakeBin, { recursive: true });
 });
 

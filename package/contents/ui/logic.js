@@ -167,14 +167,22 @@ function bindKey(value) {
 }
 
 // One listening address (as ss prints it, or a bind key other than "")
-// against another. "*" and "::" take every address, 0.0.0.0 every IPv4 one.
+// against another. "*" takes every address (ss prints it for a dual-stack
+// wildcard; as a bind address ssh opens 0.0.0.0 and [::]), "::" every IPv6
+// one (ss prints [::] for an IPV6_V6ONLY socket, and ssh sets that flag on
+// every IPv6 listener), 0.0.0.0 every IPv4 one.
 function listenAddressesOverlap(x, y) {
-    if (x === y || x === "*" || y === "*" || x === "::" || y === "::")
+    if (x === y || x === "*" || y === "*")
         return true;
+    var v6 = function (a) { return a.indexOf(":") >= 0; };
+    if (x === "::")
+        return v6(y);
+    if (y === "::")
+        return v6(x);
     if (x === "0.0.0.0")
-        return y.indexOf(":") < 0;
+        return !v6(y);
     if (y === "0.0.0.0")
-        return x.indexOf(":") < 0;
+        return !v6(x);
     return false;
 }
 
@@ -435,9 +443,11 @@ var AGENT_SHELL =
 // 127.0.0.1 and ::1 (see bindAddressesOverlap).
 var LISTEN_SHELL =
     'lhost() { local a="${1%:*}"; a="${a#[}"; a="${a%]}"; printf %s "${a%%\\%*}"; }; ' +
-    'ov() { case "$1" in "*"|"::") return 0;; esac; ' +
-    'case "$2" in "*"|"::") return 0;; "") case "$1" in 127.0.0.1|::1|0.0.0.0) return 0;; esac; return 1;; esac; ' +
+    'ov() { case "$1" in "*") return 0;; esac; ' +
+    'case "$2" in "*") return 0;; "") case "$1" in 127.0.0.1|::1|0.0.0.0|::) return 0;; esac; return 1;; esac; ' +
     '[ "$1" = "$2" ] && return 0; ' +
+    'if [ "$1" = :: ]; then [[ "$2" == *:* ]]; return; fi; ' +
+    'if [ "$2" = :: ]; then [[ "$1" == *:* ]]; return; fi; ' +
     'if [ "$1" = 0.0.0.0 ]; then [[ "$2" != *:* ]]; return; fi; ' +
     'if [ "$2" = 0.0.0.0 ]; then [[ "$1" != *:* ]]; return; fi; ' +
     'return 1; }; ';
