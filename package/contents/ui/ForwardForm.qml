@@ -6,6 +6,8 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents3
 
+import "logic.js" as Logic
+
 // Add / edit form, shown in place of the list.
 ColumnLayout {
     id: form
@@ -18,6 +20,12 @@ ColumnLayout {
     // A new forward's remote port follows the local one until it is edited.
     property bool remotePortTouched: false
 
+    // The bind address as it would be saved: "" for the default (localhost),
+    // null while the text is not an address. Its error shows once the field
+    // is left or the form submitted, not while an address is being typed.
+    readonly property var bindAddress: Logic.normalizeBindAddress(bindField.text)
+    property bool bindChecked: false
+
     signal done
 
     spacing: Kirigami.Units.largeSpacing
@@ -26,6 +34,8 @@ ColumnLayout {
         forward = f || null;
         labelField.text = f ? f.label : "";
         localPort.text = f ? String(f.localPort) : "3000";
+        bindField.text = f ? (f.bindAddress || "") : "";
+        bindChecked = false;
         hostField.text = f ? f.sshTarget : "";
         remoteHostField.text = f ? f.remoteHost : "localhost";
         remotePort.text = f ? String(f.remotePort) : "3000";
@@ -43,6 +53,12 @@ ColumnLayout {
             (lp === 0 ? localPort : remotePort).forceActiveFocus();
             return;
         }
+        if (bindAddress === null) {
+            bindChecked = true;
+            service.flash(i18n("The bind address must be an IP address, localhost or *"));
+            bindField.forceActiveFocus();
+            return;
+        }
         if (hostField.text.trim().charAt(0) === "-") {
             service.flash(i18n("The SSH host cannot start with \"-\"; put ssh options under Extra options"));
             hostField.forceActiveFocus();
@@ -55,6 +71,7 @@ ColumnLayout {
         }
         const def = {
             label: labelField.text,
+            bindAddress: bindAddress,
             localPort: lp,
             sshTarget: hostField.text,
             remoteHost: remoteHostField.text,
@@ -108,13 +125,59 @@ ColumnLayout {
             onAccepted: form.submit()
         }
 
+        // "3000 on localhost": the address is optional and reads as part
+        // of the port, so it shares its row.
         FieldLabel { text: i18n("Local port:") }
-        PortBox {
-            id: localPort
-            onTextChanged: {
-                if (!form.remotePortTouched)
-                    remotePort.text = text;
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+
+            PortBox {
+                id: localPort
+                onTextChanged: {
+                    if (!form.remotePortTouched)
+                        remotePort.text = text;
+                }
             }
+            PlasmaComponents3.Label {
+                text: i18nc("between the local port and the address it listens on, as in 3000 on localhost", "on")
+                opacity: 0.75
+            }
+            PlasmaComponents3.TextField {
+                id: bindField
+                Layout.fillWidth: true
+                placeholderText: "localhost"
+                font.family: Kirigami.Theme.fixedWidthFont.family
+                inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
+                Accessible.name: i18n("Bind address")
+                onTextEdited: form.bindChecked = false
+                onEditingFinished: form.bindChecked = true
+                onAccepted: form.submit()
+
+                PlasmaComponents3.ToolTip.text: i18n("Bind address: where the tunnel listens on this machine. Leave empty for localhost; another loopback address such as 127.0.1.1 lets several tunnels use the same port.")
+                PlasmaComponents3.ToolTip.visible: hovered
+                PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
+            }
+        }
+
+        // Shown only when it matters: a malformed address, or one other
+        // machines can reach. Neither is a reason to refuse an exposed one.
+        Item {
+            visible: bindNote.visible
+            implicitWidth: 1
+        }
+        PlasmaComponents3.Label {
+            id: bindNote
+            Layout.fillWidth: true
+            readonly property bool invalid: form.bindAddress === null && form.bindChecked
+            readonly property bool exposed: form.bindAddress !== null && !Logic.isLoopbackBind(form.bindAddress)
+            visible: invalid || exposed
+            text: invalid ? i18n("Use an IP address, localhost or *")
+                          : i18n("Reachable from other machines on your network")
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: invalid ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.neutralTextColor
+            font: Kirigami.Theme.smallFont
         }
 
         FieldLabel { text: i18n("SSH host:") }

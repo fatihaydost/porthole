@@ -200,12 +200,13 @@ PlasmaComponents3.ItemDelegate {
                 icon.name: "internet-web-browser-symbolic"
                 text: i18n("Open in Browser")
                 enabled: item.status === "active"
-                onClicked: Qt.openUrlExternally("http://" + item.service.localAddress(item.forward) + "/")
+                // a tunnel on every interface is opened through localhost
+                onClicked: Qt.openUrlExternally("http://" + item.service.browseAddress(item.forward) + "/")
             }
             PlasmaComponents3.ToolButton {
                 icon.name: "edit-copy-symbolic"
                 text: i18n("Copy Address")
-                onClicked: item.view.copyText(item.service.localAddress(item.forward))
+                onClicked: item.view.copyText(item.service.browseAddress(item.forward))
             }
             PlasmaComponents3.ToolButton {
                 icon.name: "document-edit-symbolic"

@@ -28,7 +28,7 @@ function genId(counter) {
     return "f" + Date.now().toString(36) + Number(counter || 0).toString(36);
 }
 
-var KNOWN_FIELDS = ["id", "label", "localPort", "sshTarget", "remoteHost", "remotePort", "autostart", "extraOptions"];
+var KNOWN_FIELDS = ["id", "label", "bindAddress", "localPort", "sshTarget", "remoteHost", "remotePort", "autostart", "extraOptions"];
 
 // Small stable string hash (FNV-1a, 32 bit) for ids of hand-written entries.
 function hashString(text) {
@@ -38,6 +38,171 @@ function hashString(text) {
         h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
     }
     return h.toString(36);
+}
+
+// --- bind address --------------------------------------------------------------
+//
+// Where the tunnel listens on this machine: "" (the default, ssh's localhost:
+// 127.0.0.1 and ::1), "localhost", "*" (every interface), or an IPv4 or IPv6
+// literal. Host names other than localhost are refused: they would make the
+// conflict and status checks guess.
+
+function isIPv4(s) {
+    return /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(String(s));
+}
+
+// "fe80::1", "::ffff:127.0.0.1" -> eight 16-bit words, or null.
+function parseIPv6(text) {
+    var s = String(text || "").toLowerCase();
+    if (s.indexOf(":") < 0 || !/^[0-9a-f:.]+$/.test(s))
+        return null;
+    var tail = [];
+    var lastColon = s.lastIndexOf(":");
+    var last = s.slice(lastColon + 1);
+    if (last.indexOf(".") >= 0) {
+        if (!isIPv4(last))
+            return null;
+        var o = last.split(".").map(function (x) { return parseInt(x, 10); });
+        tail = [o[0] * 256 + o[1], o[2] * 256 + o[3]];
+        // "::1.2.3.4" -> "::", "::ffff:1.2.3.4" -> "::ffff"
+        s = s.slice(0, lastColon + 1);
+        if (s.slice(-2) !== "::")
+            s = s.slice(0, -1);
+    }
+    var halves = s.split("::");
+    if (halves.length > 2)
+        return null;
+    var words = function (part) {
+        if (part === "")
+            return [];
+        var out = [];
+        var groups = part.split(":");
+        for (var i = 0; i < groups.length; i++) {
+            if (!/^[0-9a-f]{1,4}$/.test(groups[i]))
+                return null;
+            out.push(parseInt(groups[i], 16));
+        }
+        return out;
+    };
+    var head = words(halves[0]);
+    var rest = halves.length === 2 ? words(halves[1]) : [];
+    if (head === null || rest === null)
+        return null;
+    var total = head.length + rest.length + tail.length;
+    if (halves.length === 1 ? total !== 8 : total > 7)
+        return null;
+    var zeros = [];
+    for (var z = total; z < 8; z++)
+        zeros.push(0);
+    return head.concat(zeros, rest, tail);
+}
+
+// The form ss prints (glibc inet_ntop, RFC 5952): lower case, the longest
+// run of two or more zero words as "::", the IPv4 tail of mapped addresses.
+function canonicalIPv6(text) {
+    var w = parseIPv6(text);
+    if (!w)
+        return null;
+    var best = -1, bestLen = 0;
+    for (var i = 0; i < 8;) {
+        if (w[i] !== 0) {
+            i++;
+            continue;
+        }
+        var j = i;
+        while (j < 8 && w[j] === 0)
+            j++;
+        if (j - i > bestLen) {
+            best = i;
+            bestLen = j - i;
+        }
+        i = j;
+    }
+    if (bestLen < 2)
+        best = -1;
+    var v4tail = best === 0 && (bestLen === 6 || (bestLen === 5 && w[5] === 0xffff));
+    var out = "";
+    for (var k = 0; k < 8; k++) {
+        if (k === best) {
+            out += "::";
+            k += bestLen - 1;
+            continue;
+        }
+        if (v4tail && k === 6) {
+            out += (out.slice(-1) === ":" ? "" : ":") + (w[6] >> 8) + "." + (w[6] & 255) + "." + (w[7] >> 8) + "." + (w[7] & 255);
+            break;
+        }
+        out += (out === "" || out.slice(-1) === ":" ? "" : ":") + w[k].toString(16);
+    }
+    return out;
+}
+
+// Trimmed, square brackets off an IPv6 literal, lower case. "" when empty,
+// null when the text is not an address this widget accepts.
+function normalizeBindAddress(value) {
+    var s = String(value === undefined || value === null ? "" : value).trim();
+    var bracketed = s.charAt(0) === "[" && s.charAt(s.length - 1) === "]";
+    if (bracketed)
+        s = s.slice(1, -1).trim();
+    if (s === "")
+        return bracketed ? null : "";
+    var lower = s.toLowerCase();
+    if (parseIPv6(lower))
+        return lower;
+    if (bracketed)
+        return null;
+    if (lower === "localhost" || s === "*" || isIPv4(s))
+        return lower;
+    return null;
+}
+
+// What an address means for conflicts and status, compared as text: "" for
+// ssh's default and "localhost" (127.0.0.1 and ::1 both), the canonical form
+// of an IPv6 literal, everything else as it is.
+function bindKey(value) {
+    var s = normalizeBindAddress(value);
+    if (s === null || s === "" || s === "localhost")
+        return "";
+    return s.indexOf(":") >= 0 ? canonicalIPv6(s) : s;
+}
+
+// One listening address (as ss prints it, or a bind key other than "")
+// against another. "*" and "::" take every address, 0.0.0.0 every IPv4 one.
+function listenAddressesOverlap(x, y) {
+    if (x === y || x === "*" || y === "*" || x === "::" || y === "::")
+        return true;
+    if (x === "0.0.0.0")
+        return y.indexOf(":") < 0;
+    if (y === "0.0.0.0")
+        return x.indexOf(":") < 0;
+    return false;
+}
+
+// Whether two bind addresses (raw or keys) share a listening address.
+function bindAddressesOverlap(a, b) {
+    var atoms = function (key) { return key === "" ? ["127.0.0.1", "::1"] : [key]; };
+    var xa = atoms(bindKey(a));
+    var xb = atoms(bindKey(b));
+    for (var i = 0; i < xa.length; i++)
+        for (var j = 0; j < xb.length; j++)
+            if (listenAddressesOverlap(xa[i], xb[j]))
+                return true;
+    return false;
+}
+
+// Two forwards that cannot listen at the same time: same port, and an
+// address in common. 127.0.1.1:3000 and 127.0.1.2:3000 can.
+function forwardsConflict(a, b) {
+    return !!a && !!b && parseInt(a.localPort, 10) === parseInt(b.localPort, 10)
+        && bindAddressesOverlap(a.bindAddress, b.bindAddress);
+}
+
+// Only this machine can connect: the default, localhost, 127.0.0.0/8, ::1.
+function isLoopbackBind(value) {
+    var key = bindKey(value);
+    if (key === "")
+        return true;
+    return /^127\./.test(key) || key === "::1" || /^::ffff:127\./.test(key);
 }
 
 // Same rules as the original: a forward needs a positive local port and an
@@ -57,10 +222,16 @@ function normalizeForward(raw, makeId) {
     var rp = parseInt(raw.remotePort, 10);
     if (!isFinite(rp) || rp <= 0 || rp > 65535)
         rp = lp;
+    // A bind address the widget cannot read makes the entry unreadable, so it
+    // is kept as written rather than started on the wrong address.
+    var bind = normalizeBindAddress(raw.bindAddress);
+    if (bind === null)
+        return null;
     var id = String(raw.id || "").trim().replace(/[^A-Za-z0-9._-]/g, "_");
     return {
         id: id || makeId(),
         label: String(raw.label || "").trim(),
+        bindAddress: bind,
         localPort: lp,
         sshTarget: target,
         remoteHost: String(raw.remoteHost || "").trim() || "localhost",
@@ -110,7 +281,13 @@ function parseStore(text) {
     for (var i = 0; i < list.length; i++) {
         var entry = list[i];
         var n = normalizeForward(entry, function () {
-            return "h" + hashString([entry.localPort, entry.sshTarget, entry.remoteHost, entry.remotePort, entry.label].join("|"));
+            var parts = [entry.localPort, entry.sshTarget, entry.remoteHost, entry.remotePort, entry.label];
+            // only when set: ids of entries written before bind addresses
+            // existed stay what they were, and so do their running units
+            var bind = normalizeBindAddress(entry.bindAddress);
+            if (bind)
+                parts.push(bind);
+            return "h" + hashString(parts.join("|"));
         });
         if (!n) {
             result.invalid.push({ index: i, raw: entry });
@@ -179,8 +356,23 @@ function forwardTitle(f) {
     return f.localPort + " → " + f.sshTarget;
 }
 
+// "localhost:3000", "127.0.1.1:3000", "[::1]:3000", "*:3000".
 function localAddress(f) {
-    return f ? "localhost:" + f.localPort : "";
+    if (!f)
+        return "";
+    var bind = normalizeBindAddress(f.bindAddress) || "localhost";
+    return (bind.indexOf(":") >= 0 ? "[" + bind + "]" : bind) + ":" + f.localPort;
+}
+
+// What Open in Browser and Copy Address use: the bind address, except that a
+// tunnel on every interface is reached through localhost.
+function browseAddress(f) {
+    if (!f)
+        return "";
+    var key = bindKey(f.bindAddress);
+    if (key === "" || key === "*" || key === "0.0.0.0" || key === "::")
+        return "localhost:" + f.localPort;
+    return localAddress(f);
 }
 
 function remoteAddress(f) {
@@ -192,9 +384,14 @@ function unitName(id) {
 }
 
 // The ssh argument vector, flag for flag the original's.
+// With a bind address the spec gains a leading "<bind>:" ("[<bind>]:" for
+// IPv6); without one it is the original's byte for byte.
 function forwardCommand(f, trustHostKey) {
     var rh = (f.remoteHost && String(f.remoteHost).length) ? String(f.remoteHost) : "localhost";
     var spec = f.localPort + ":" + rh + ":" + f.remotePort;
+    var bind = normalizeBindAddress(f.bindAddress);
+    if (bind)
+        spec = (bind.indexOf(":") >= 0 ? "[" + bind + "]" : bind) + ":" + spec;
     var cmd = ["ssh", "-N", "-T",
         "-o", "BatchMode=yes",
         "-o", "ExitOnForwardFailure=yes",
@@ -230,9 +427,24 @@ var AGENT_SHELL =
     'if [ -z "$sock" ] && [ -n "$XDG_RUNTIME_DIR" ] && [ -S "$XDG_RUNTIME_DIR/gcr/ssh" ]; then sock="$XDG_RUNTIME_DIR/gcr/ssh"; fi; ' +
     'if [ -z "$sock" ] && command -v gpgconf >/dev/null 2>&1; then g=$(gpgconf --list-dirs agent-ssh-socket 2>/dev/null); if [ -n "$g" ] && [ -S "$g" ]; then sock="$g"; fi; fi; ';
 
+// Shell helpers shared by the start and poll scripts.
+//   lhost <ss local address column>  -> the host: "127.0.0.1", "::1", "*"
+//   ov <listening host> <bind key>   -> whether a connection to the bind
+//                                       address could land on that listener
+// `ov` is listenAddressesOverlap with the bind key "" standing for
+// 127.0.0.1 and ::1 (see bindAddressesOverlap).
+var LISTEN_SHELL =
+    'lhost() { local a="${1%:*}"; a="${a#[}"; a="${a%]}"; printf %s "${a%%\\%*}"; }; ' +
+    'ov() { case "$1" in "*"|"::") return 0;; esac; ' +
+    'case "$2" in "*"|"::") return 0;; "") case "$1" in 127.0.0.1|::1|0.0.0.0) return 0;; esac; return 1;; esac; ' +
+    '[ "$1" = "$2" ] && return 0; ' +
+    'if [ "$1" = 0.0.0.0 ]; then [[ "$2" != *:* ]]; return; fi; ' +
+    'if [ "$2" = 0.0.0.0 ]; then [[ "$1" != *:* ]]; return; fi; ' +
+    'return 1; }; ';
+
 // One sequenced script: stop every unit that may hold the port (the forward's
-// own unit plus `otherUnits`, the active forwards on the same local port),
-// wait up to 4 s for the port to free, then start the tunnel as a fresh
+// own unit plus `otherUnits`, the active forwards it conflicts with), wait up
+// to 4 s for its address and port to free, then start the tunnel as a fresh
 // transient unit. Running it as one command is what keeps restarts and port
 // bouncing free of races. No --collect: a failed unit has to stay around long
 // enough for the poll to read its journal; reset-failed cleans it up.
@@ -246,9 +458,15 @@ function startScript(f, otherUnits, trustHostKey, description) {
     // One unit per systemctl call: with several names, current systemd
     // refuses the whole job when any of them is not loaded (the forward's own
     // unit usually is not), and nothing would be stopped.
-    return C_LOCALE
+    // Only listeners a connection to this tunnel's address could reach count:
+    // a sibling on 127.0.1.1:3000 does not hold up one on 127.0.1.2:3000.
+    return C_LOCALE + LISTEN_SHELL
         + "for u in " + q + "; do systemctl --user stop \"$u\" 2>/dev/null; systemctl --user reset-failed \"$u\" 2>/dev/null; done; "
-        + "for i in $(seq 1 40); do ss -Hltn 2>/dev/null | grep -q ':" + parseInt(f.localPort, 10) + " ' || break; sleep 0.1; done; "
+        + "port=" + parseInt(f.localPort, 10) + "; bind=" + shellQuote(bindKey(f.bindAddress)) + "; "
+        + 'for i in $(seq 1 40); do busy=no; '
+        + 'while read -r _ _ _ la _; do [ "${la##*:}" = "$port" ] && ov "$(lhost "$la")" "$bind" && { busy=yes; break; }; done < <(ss -Hltn 2>/dev/null); '
+        + '[ $busy = no ] && break; sleep 0.1; done; '
+
         + AGENT_SHELL
         + "exec systemd-run --user --unit=" + shellQuote(unit)
         + " --description=" + shellQuote(description)
@@ -271,30 +489,33 @@ function stopScript(id) {
 // the column then reads "=".
 // "listen" is "yes" when the unit's own ssh (MainPID) listens on the port and
 // nobody else does, "shared" when another program listens on it as well (ssh
-// got ::1 but 127.0.0.1 was taken, say), "no" otherwise.
+// got ::1 but 127.0.0.1 was taken, say), "no" otherwise. Another program only
+// counts when a connection to the forward's bind address could reach it, so
+// tunnels on 127.0.1.1:3000 and 127.0.1.2:3000 never share.
 // Output per forward: id state listen msg hk url invocation ("-" = empty).
 // A last "@cfg" line carries the store's mtime/size/inode so hand edits are
 // picked up without reopening the popup.
 function pollScript(forwards, cachedInvocations) {
-    var script = C_LOCALE + CONFIG_SHELL;
+    var script = C_LOCALE + CONFIG_SHELL + LISTEN_SHELL;
     var cache = cachedInvocations || {};
     var specs = [];
     for (var i = 0; i < forwards.length; i++) {
         var id = forwards[i].id;
-        specs.push(shellQuote(id + "|" + unitName(id) + "|" + forwards[i].localPort + "|" + (cache[id] || "")));
+        specs.push(shellQuote(id + "|" + unitName(id) + "|" + forwards[i].localPort + "|" + bindKey(forwards[i].bindAddress) + "|" + (cache[id] || "")));
     }
     if (specs.length > 0) {
         script +=
             'listening=$(ss -Hltnp 2>/dev/null); ' +
             'for e in ' + specs.join(" ") + '; do ' +
-            'IFS="|" read -r id unit port cinv <<< "$e"; ' +
+            'IFS="|" read -r id unit port bind cinv <<< "$e"; ' +
             'state=$(systemctl --user is-active "$unit" 2>/dev/null); ' +
             'inv=$(systemctl --user show -p InvocationID --value "$unit" 2>/dev/null); ' +
             'pid=$(systemctl --user show -p MainPID --value "$unit" 2>/dev/null); ' +
             'mine=no; other=no; ' +
             'while IFS= read -r l; do [ -z "$l" ] && continue; ' +
-            'if [ "${pid:-0}" != 0 ] && [[ "$l" == *"pid=$pid,"* ]]; then mine=yes; else other=yes; fi; ' +
-            'done <<< "$(printf "%s\\n" "$listening" | grep ":$port ")"; ' +
+            'read -r _ _ _ la _ <<< "$l"; [ "${la##*:}" = "$port" ] || continue; ' +
+            'if [ "${pid:-0}" != 0 ] && [[ "$l" == *"pid=$pid,"* ]]; then mine=yes; elif ov "$(lhost "$la")" "$bind"; then other=yes; fi; ' +
+            'done <<< "$listening"; ' +
             'listen=no; [ $mine = yes ] && listen=yes; [ $mine = yes ] && [ $other = yes ] && listen=shared; ' +
             'msg=-; hk=-; url=-; ' +
             'if [ "$state" = failed ] && [ -n "$inv" ] && [ "$inv" = "$cinv" ]; then msg="="; hk="="; ' +
@@ -791,12 +1012,14 @@ function formatAddress(host, port) {
     return (host.indexOf(":") >= 0 ? "[" + host + "]" : host === "" ? "*" : host) + ":" + port;
 }
 
-// Where a browser should go: localhost unless the server is bound to one
-// specific address only.
+// Where a browser should go: localhost when the server listens there (or on
+// every interface), else the specific address it is bound to (a LAN address,
+// or a loopback one such as 127.0.1.1 that localhost does not reach).
 function browseHost(entry) {
-    if (entry.scope === "lan" && entry.hosts.length === 1)
-        return entry.hosts[0].indexOf(":") >= 0 ? "[" + entry.hosts[0] + "]" : entry.hosts[0];
-    return "localhost";
+    var hosts = entry.hosts || [];
+    if (entry.scope === "all" || hosts.length === 0 || hosts.indexOf("127.0.0.1") >= 0 || hosts.indexOf("::1") >= 0)
+        return "localhost";
+    return hosts[0].indexOf(":") >= 0 ? "[" + hosts[0] + "]" : hosts[0];
 }
 
 // Sends SIGTERM (SIGKILL when `force`) to `pid`, but only if it is still the

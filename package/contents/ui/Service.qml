@@ -117,6 +117,7 @@ Item {
 
     function forwardTitle(f) { return Logic.forwardTitle(f); }
     function localAddress(f) { return Logic.localAddress(f); }
+    function browseAddress(f) { return Logic.browseAddress(f); }
     function remoteAddress(f) { return Logic.remoteAddress(f); }
 
     function currentErrorText() {
@@ -232,6 +233,7 @@ Item {
         return Logic.normalizeForward({
             id: id,
             label: def.label,
+            bindAddress: def.bindAddress,
             localPort: def.localPort,
             sshTarget: def.sshTarget,
             remoteHost: def.remoteHost,
@@ -354,13 +356,14 @@ Item {
                                : i18n("ssh is not installed or not on PATH"));
             return;
         }
-        // Every other active forward on the same local port goes down first.
+        // Every other active forward that would take the same address and
+        // port goes down first; 127.0.1.1:3000 and 127.0.1.2:3000 both stay.
         const others = [];
         for (let i = 0; i < forwards.length; i++) {
             const other = forwards[i];
             if (String(other.id) === String(f.id))
                 continue;
-            if (other.localPort === f.localPort && isActive(other.id)) {
+            if (Logic.forwardsConflict(other, f) && isActive(other.id)) {
                 others.push(Logic.unitName(other.id));
                 _touch(other.id);
                 _setOne(other.id, "inactive", "");
@@ -527,8 +530,12 @@ Item {
             }
             if (status === "auth")
                 newAuth[id] = row.url;
-            if (status === "active" && row.listen === "shared")
-                newWarn[id] = i18n("Another program also listens on port %1; localhost may reach it instead of this tunnel", String(findForward(id).localPort));
+            if (status === "active" && row.listen === "shared") {
+                const f = findForward(id);
+                newWarn[id] = Logic.bindKey(f.bindAddress) === ""
+                    ? i18n("Another program also listens on port %1; localhost may reach it instead of this tunnel", String(f.localPort))
+                    : i18n("Another program also listens on %1; it may answer instead of this tunnel", localAddress(f));
+            }
             newStatus[id] = status;
         }
         // Forwards added while the poll ran keep their optimistic state.
