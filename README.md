@@ -31,7 +31,10 @@ its program and project.
 - **Active means listening**: a row turns green only once its ssh accepts connections
   on the local port.
 - **Bounce a port between hosts**: switching on a forward stops any other one on the same
-  local port, so moving `3000` from staging to production is one click.
+  local address and port, so moving `3000` from staging to production is one click.
+- **Or keep them side by side** with a bind address: `127.0.1.1:3000` to staging and
+  `127.0.1.2:3000` to production run at the same time. An address other machines can
+  reach (`0.0.0.0`, `*`, a LAN address) is allowed, and the form says so.
 - **When ssh needs you**: the Tailscale SSH approval link opens from the row; an unknown
   host key can be trusted and retried; a *changed* host key is never trusted
   automatically.
@@ -120,6 +123,7 @@ Forwards are kept in `~/.config/porthole/forwards.json`. You can edit it by hand
   "forwards": [
     {
       "label": "Staging web",
+      "bindAddress": "",
       "localPort": 3000,
       "sshTarget": "staging",
       "remoteHost": "localhost",
@@ -133,6 +137,11 @@ Forwards are kept in `~/.config/porthole/forwards.json`. You can edit it by hand
 
 - `localPort` and `sshTarget` (a `Host` from `~/.ssh/config`, or `user@host`) are
   required. `remoteHost` defaults to `localhost`, `remotePort` to the local port.
+- `bindAddress` is optional; empty means `localhost` (`127.0.0.1` and `::1`). Every
+  address in `127.0.0.0/8` is loopback on Linux and needs no setup, so `127.0.1.1` and
+  `127.0.1.2` can each have their own tunnel on port `3000`. It takes an IPv4 or IPv6
+  address (brackets optional), `localhost`, or `*` for every interface; an entry with
+  anything else, such as a host name, is kept as written but not used.
 - `extraOptions` is split on whitespace; anything that needs quoting belongs in
   `~/.ssh/config`.
 - `id` may be left out; Porthole derives a stable one.
@@ -148,11 +157,11 @@ error and will not save until you fix it.
 systemd-run --user --unit=porthole-<id> -- \
   ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes \
       -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=10 \
-      -L <localPort>:<remoteHost>:<remotePort> [extraOptions] -- <sshTarget>
+      -L [<bindAddress>:]<localPort>:<remoteHost>:<remotePort> [extraOptions] -- <sshTarget>
 ```
 
 systemd is the single source of truth: every 4 seconds Porthole reads each unit's state,
-who listens on its port, and its journal when something is wrong. There is no automatic
+who listens on its address and port, and its journal when something is wrong. There is no automatic
 reconnect; a dropped connection shows as an error, and the switch retries it. The units
 are ordinary ones:
 
@@ -180,8 +189,8 @@ ssh-add
 ## Development
 
 ```bash
-node tests/logic.test.js   # 29 unit tests
-tests/run-e2e.sh           # 56 end-to-end steps against a throwaway sshd on 127.0.0.1:2222
+node tests/logic.test.js   # 39 unit tests
+tests/run-e2e.sh           # 74 end-to-end steps against a throwaway sshd on 127.0.0.1:2222
 /usr/lib/qt6/bin/qmllint -I /usr/lib/qt6/qml package/contents/ui/*.qml
 plasmoidviewer -a package
 ```

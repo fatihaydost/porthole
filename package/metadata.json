@@ -15,7 +15,7 @@
         "Id": "io.github.fatihaydost.porthole",
         "License": "MIT",
         "Name": "Porthole",
-        "Version": "0.1.0",
+        "Version": "0.2.0",
         "Website": "https://github.com/fatihaydost/porthole"
     },
     "X-Plasma-API-Minimum-Version": "6.0",
