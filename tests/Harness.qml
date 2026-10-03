@@ -224,8 +224,12 @@ Item {
                   const by = id => j.forwards.filter(e => e.id === id)[0];
                   return by(ids.P1).bindAddress === "127.0.1.1" && by(ids.P2).bindAddress === "127.0.1.2" && by(ids.A).bindAddress === "" ? "" : shellResult.out;
               } },
-            { name: "start both: same port, two addresses, both active, neither bounced",
-              run: () => { svc.start(fw("P1")); svc.start(fw("P2")); },
+            { name: "start P1",
+              run: () => svc.start(fw("P1")),
+              until: () => st("P1") === "active", timeout: 25000,
+              detail: () => describe("P1") },
+            { name: "start P2: same port, other address, P1 is not bounced",
+              run: () => svc.start(fw("P2")),
               until: () => st("P1") === "active" && st("P2") === "active" && elapsed() > 5000, timeout: 25000,
               check: () => svc.warningOf(ids.P1) === "" && svc.warningOf(ids.P2) === "" ? "" : describe("P1") + " | " + describe("P2"),
               detail: () => describe("P1") + " | " + describe("P2") },
