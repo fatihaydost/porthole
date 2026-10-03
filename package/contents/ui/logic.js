@@ -147,7 +147,12 @@ function normalizeBindAddress(value) {
     if (s === "")
         return bracketed ? null : "";
     var lower = s.toLowerCase();
-    if (parseIPv6(lower))
+    var w = parseIPv6(lower);
+    // IPv4-mapped (::ffff:a.b.c.d): ssh's IPv6 listeners are IPv6 only, so
+    // binding one fails with "Invalid argument". The IPv4 address is meant.
+    if (w && w[0] === 0 && w[1] === 0 && w[2] === 0 && w[3] === 0 && w[4] === 0 && w[5] === 0xffff)
+        return null;
+    if (w)
         return lower;
     if (bracketed)
         return null;
@@ -210,7 +215,7 @@ function isLoopbackBind(value) {
     var key = bindKey(value);
     if (key === "")
         return true;
-    return /^127\./.test(key) || key === "::1" || /^::ffff:127\./.test(key);
+    return /^127\./.test(key) || key === "::1";
 }
 
 // Same rules as the original: a forward needs a positive local port and an

@@ -499,7 +499,7 @@ test("bind address: accepted and refused shapes", () => {
     const ok = {
         "": "", "   ": "", " 127.0.1.1 ": "127.0.1.1", "0.0.0.0": "0.0.0.0", "255.255.255.255": "255.255.255.255",
         "localhost": "localhost", "LocalHost": "localhost", "*": "*", "::": "::", "::1": "::1", "[::1]": "::1",
-        "[ ::1 ]": "::1", "FE80::1": "fe80::1", "2001:db8::42": "2001:db8::42", "::ffff:127.0.0.1": "::ffff:127.0.0.1",
+        "[ ::1 ]": "::1", "FE80::1": "fe80::1", "2001:db8::42": "2001:db8::42", "64:ff9b::1": "64:ff9b::1", "::ffff:1:0:1": "::ffff:1:0:1",
         "0:0:0:0:0:0:0:1": "0:0:0:0:0:0:0:1"
     };
     for (const k in ok)
@@ -507,7 +507,7 @@ test("bind address: accepted and refused shapes", () => {
     assert.strictEqual(L.normalizeBindAddress(undefined), "");
     assert.strictEqual(L.normalizeBindAddress(null), "");
     for (const bad of ["256.1.1.1", "01.2.3.4", "1.2.3", "1.2.3.4.5", "host.lan", "example.com", "[]", "[127.0.0.1]",
-            "[localhost]", "fe80::1%eth0", "1::2::3", ":::", "1:2:3:4:5:6:7:8:9", "127.0.0.1:3000", "**", "-oProxyCommand=x", "a b", 5, true])
+            "[localhost]", "fe80::1%eth0", "::ffff:127.0.0.1", "[::ffff:127.0.0.1]", "::FFFF:7f00:1", "0:0:0:0:0:ffff:c0a8:105", "1::2::3", ":::", "1:2:3:4:5:6:7:8:9", "127.0.0.1:3000", "**", "-oProxyCommand=x", "a b", 5, true])
         assert.strictEqual(L.normalizeBindAddress(bad), null, String(bad));
 });
 
@@ -732,7 +732,7 @@ test("bind address: shown, copied and opened", () => {
         assert.strictEqual(L.localAddress(f(b)), shown, String(b));
         assert.strictEqual(L.browseAddress(f(b)), browse, String(b));
     }
-    for (const b of ["", "localhost", "127.0.0.1", "127.0.1.1", "127.255.255.254", "::1", "::ffff:127.0.0.1"])
+    for (const b of ["", "localhost", "127.0.0.1", "127.0.1.1", "127.255.255.254", "::1"])
         assert.strictEqual(L.isLoopbackBind(b), true, b);
     for (const b of ["0.0.0.0", "*", "::", "192.168.1.5", "10.0.0.1", "fe80::1", "128.0.0.1"])
         assert.strictEqual(L.isLoopbackBind(b), false, b);
