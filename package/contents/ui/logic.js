@@ -527,9 +527,8 @@ function pollScript(forwards, cachedInvocations) {
             'inv=$(systemctl --user show -p InvocationID --value "$unit" 2>/dev/null); ' +
             'pid=$(systemctl --user show -p MainPID --value "$unit" 2>/dev/null); ' +
             'mine=no; other=no; ' +
-            'while IFS= read -r l; do [ -z "$l" ] && continue; ' +
-            'read -r _ _ _ la _ <<< "$l"; [ "${la##*:}" = "$port" ] || continue; ' +
-            'if [ "${pid:-0}" != 0 ] && [[ "$l" == *"pid=$pid,"* ]]; then mine=yes; elif ov "$(lhost "$la")" "$bind"; then other=yes; fi; ' +
+            'while read -r _ _ _ la rest; do [ -n "$la" ] && [ "${la##*:}" = "$port" ] || continue; ' +
+            'if [ "${pid:-0}" != 0 ] && [[ "$rest" == *"pid=$pid,"* ]]; then mine=yes; elif ov "$(lhost "$la")" "$bind"; then other=yes; fi; ' +
             'done <<< "$listening"; ' +
             'listen=no; [ $mine = yes ] && listen=yes; [ $mine = yes ] && [ $other = yes ] && listen=shared; ' +
             'msg=-; hk=-; url=-; ' +
