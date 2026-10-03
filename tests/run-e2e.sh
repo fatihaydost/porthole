@@ -27,7 +27,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for port in 2222 2223 8765 8766 18765 18766 18767 18768 18769 18770 18780 18790 18791 18850 18851 18852 18853; do
+for port in 2222 2223 8765 8766 18765 18766 18767 18768 18769 18770 18780 18790 18791 18795 18797 18850 18851 18852 18853; do
     if ss -Hltn | grep -q ":$port "; then echo "port $port is busy" >&2; exit 2; fi
 done
 
@@ -93,6 +93,14 @@ pids+=($!)
 # Another program on 127.0.0.1:18780 only: the tunnel there gets ::1 and the
 # widget has to say the port is shared.
 python3 -m http.server 18780 --bind 127.0.0.1 < /dev/null > /dev/null 2>&1 &
+pids+=($!)
+# Bind addresses: the tunnels take 127.0.1.1 and 127.0.1.2 on 18795, a server
+# of ours sits on 127.0.1.3 of the same port (Local ports must list it, and
+# only it); another program holds 127.0.0.1:18797.
+mkdir -p "$T/lp-bind"
+(cd "$T/lp-bind" && exec python3 -m http.server 18795 --bind 127.0.1.3 < /dev/null > /dev/null 2>&1) &
+pids+=($!)
+python3 -m http.server 18797 --bind 127.0.0.1 < /dev/null > /dev/null 2>&1 &
 pids+=($!)
 sleep 1.5
 # no "Killed" job notices when the servers are stopped (some by the test itself)

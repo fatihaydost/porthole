@@ -1,6 +1,7 @@
 import QtQuick
 
 import "../package/contents/ui" as UI
+import "../package/contents/ui/logic.js" as Logic
 
 // End-to-end scenario for Service.qml against the scratch sshd started by
 // tests/run-e2e.sh. Every action is a call the popup makes; every check reads
@@ -44,6 +45,11 @@ Item {
         id: lp
     }
 
+    function localAt(host, port) {
+        const all = lp.entries.concat(lp.system);
+        return all.filter(e => e.port === port && e.hosts.indexOf(host) >= 0);
+    }
+
     function local(port) {
         const all = lp.entries.concat(lp.system);
         for (let i = 0; i < all.length; i++)
@@ -62,6 +68,13 @@ Item {
     function def(label, lp, target, rp, extra, autostart) {
         return { label: label, localPort: lp, sshTarget: target, remoteHost: "localhost", remotePort: rp, autostart: autostart === true, extraOptions: extra };
     }
+    function defb(label, bind, lp, rp) {
+        const d = def(label, lp, user + "@127.0.0.1", rp, "-p 2222 " + kh);
+        d.bindAddress = bind;
+        return d;
+    }
+    function curl(url) { shell("curl -s --max-time 5 " + url + "; echo \" rc=$?\""); }
+    function curlOut() { return shellResult.out; }
     function elapsed() { return Date.now() - stepStart; }
     function describe(name) {
         return name + " status=" + st(name) + " err=" + JSON.stringify(svc.errorOf(ids[name])) + " hk=" + svc.hostKeyIssueOf(ids[name]);
@@ -194,6 +207,101 @@ Item {
               until: () => elapsed() > 2000 && st("A") === "active", timeout: 25000,
               check: () => fw("A").label === "web A edited" && fw("A").autostart === true ? "" : JSON.stringify(fw("A")),
               detail: () => describe("A") },
+            // --- bind addresses: one port, several loopback addresses -------
+            { name: "bind address: add P1 (127.0.1.1:18795 -> 8765) and P2 (127.0.1.2:18795 -> 8766)",
+              run: () => {
+                  ids.P1 = svc.addForward(defb("bind one", "127.0.1.1", 18795, 8765));
+                  ids.P2 = svc.addForward(defb("bind two", " 127.0.1.2 ", 18795, 8766));
+              },
+              until: () => elapsed() > 600,
+              check: () => fw("P1") && fw("P2") && svc.localAddress(fw("P1")) === "127.0.1.1:18795" && svc.browseAddress(fw("P2")) === "127.0.1.2:18795"
+                  ? "" : JSON.stringify([fw("P1"), fw("P2")]) },
+            { name: "...saved with their addresses; the old forward gets an empty one",
+              run: () => shell('cat "$XDG_CONFIG_HOME/porthole/forwards.json"'),
+              until: () => shellResult !== null,
+              check: () => {
+                  const j = JSON.parse(shellResult.out);
+                  const by = id => j.forwards.filter(e => e.id === id)[0];
+                  return by(ids.P1).bindAddress === "127.0.1.1" && by(ids.P2).bindAddress === "127.0.1.2" && by(ids.A).bindAddress === "" ? "" : shellResult.out;
+              } },
+            { name: "start both: same port, two addresses, both active, neither bounced",
+              run: () => { svc.start(fw("P1")); svc.start(fw("P2")); },
+              until: () => st("P1") === "active" && st("P2") === "active" && elapsed() > 5000, timeout: 25000,
+              check: () => svc.warningOf(ids.P1) === "" && svc.warningOf(ids.P2) === "" ? "" : describe("P1") + " | " + describe("P2"),
+              detail: () => describe("P1") + " | " + describe("P2") },
+            { name: "systemd agrees: both units run",
+              run: () => shell("systemctl --user is-active " + unit("P1") + " " + unit("P2") + "; true"),
+              until: () => shellResult !== null,
+              check: () => shellResult.out.trim() === "active\nactive" ? "" : shellResult.out },
+            { name: "curl 127.0.1.1:18795 reaches server A",
+              run: () => curl("http://127.0.1.1:18795/"),
+              until: () => shellResult !== null,
+              check: () => curlOut().indexOf("TUNNEL-A") === 0 ? "" : curlOut() },
+            { name: "curl 127.0.1.2:18795 reaches server B",
+              run: () => curl("http://127.0.1.2:18795/"),
+              until: () => shellResult !== null,
+              check: () => curlOut().indexOf("TUNNEL-B") === 0 ? "" : curlOut() },
+            { name: "neither listens on localhost:18795",
+              run: () => curl("http://localhost:18795/"),
+              until: () => shellResult !== null,
+              check: () => !/TUNNEL/.test(curlOut()) && !/ rc=0/.test(curlOut()) ? "" : curlOut() },
+            { name: "the empty-address tunnel A is untouched and still answers",
+              run: () => curl("http://localhost:18765/"),
+              until: () => shellResult !== null,
+              check: () => st("A") === "active" && curlOut().indexOf("TUNNEL-A") === 0 ? "" : describe("A") + " " + curlOut() },
+            { name: "an empty-address forward L on the same port runs beside them",
+              run: () => { ids.L = svc.addForward(def("default address", 18795, target, 8766, "-p 2222 " + kh)); svc.start(fw("L")); },
+              until: () => st("L") === "active" && elapsed() > 5000, timeout: 25000,
+              check: () => st("P1") === "active" && st("P2") === "active" && svc.warningOf(ids.L) === "" && svc.localAddress(fw("L")) === "localhost:18795"
+                  ? "" : describe("L") + " | " + describe("P1") + " | " + describe("P2"),
+              detail: () => describe("L") },
+            { name: "curl localhost:18795 reaches L (server B)",
+              run: () => curl("http://localhost:18795/"),
+              until: () => shellResult !== null,
+              check: () => curlOut().indexOf("TUNNEL-B") === 0 ? "" : curlOut() },
+            { name: "local ports: the bound tunnels stay out, a server on 127.0.1.3:18795 is listed",
+              run: () => { mark.rev = lp.revision; lp.poll(); },
+              until: () => lp.revision > mark.rev, timeout: 10000,
+              check: () => {
+                  const same = lp.entries.concat(lp.system).filter(e => e.port === 18795);
+                  const e = same[0];
+                  return same.length === 1 && e.hosts.length === 1 && e.hosts[0] === "127.0.1.3" && e.project === "lp-bind"
+                      && Logic.browseHost(e) === "127.0.1.3" && localAt("127.0.1.1", 18795).length === 0 ? "" : JSON.stringify(same);
+              } },
+            { name: "stop P1: P2 and L live on",
+              run: () => svc.stop(ids.P1),
+              until: () => elapsed() > 5000,
+              check: () => st("P1") === "inactive" && st("P2") === "active" && st("L") === "active" ? "" : describe("P1") + " | " + describe("P2") + " | " + describe("L") },
+            { name: "...127.0.1.1:18795 is gone",
+              run: () => curl("http://127.0.1.1:18795/"),
+              until: () => shellResult !== null,
+              check: () => !/TUNNEL/.test(curlOut()) && !/ rc=0/.test(curlOut()) ? "" : curlOut() },
+            { name: "...127.0.1.2:18795 still reaches server B",
+              run: () => curl("http://127.0.1.2:18795/"),
+              until: () => shellResult !== null,
+              check: () => curlOut().indexOf("TUNNEL-B") === 0 ? "" : curlOut() },
+            { name: "another program on 127.0.0.1:18797: only the empty-address tunnel there warns",
+              run: () => {
+                  ids.Q = svc.addForward(defb("bind q", "127.0.1.4", 18797, 8765));
+                  ids.R = svc.addForward(def("default r", 18797, target, 8766, "-p 2222 " + kh));
+                  svc.start(fw("Q"));
+                  svc.start(fw("R"));
+              },
+              until: () => st("Q") === "active" && st("R") === "active" && svc.warningOf(ids.R) !== "" && elapsed() > 5000, timeout: 25000,
+              check: () => svc.warningOf(ids.Q) === "" && svc.severityOf(ids.Q) === "" && svc.severityOf(ids.R) === "warning" ? "" : describe("Q") + " warn=" + svc.warningOf(ids.Q),
+              detail: () => describe("Q") + " | " + describe("R") + " warn=" + svc.warningOf(ids.R) },
+            { name: "...curl 127.0.1.4:18797 reaches server A through Q",
+              run: () => curl("http://127.0.1.4:18797/"),
+              until: () => shellResult !== null,
+              check: () => curlOut().indexOf("TUNNEL-A") === 0 ? "" : curlOut() },
+            { name: "removing the bind-address forwards stops their units",
+              run: () => { for (const k of ["P1", "P2", "L", "Q", "R"]) svc.removeForward(ids[k]); },
+              until: () => elapsed() > 2500,
+              check: () => ["P1", "P2", "L", "Q", "R"].every(k => !fw(k)) && svc.forwards.length === 7 ? "" : "forwards " + svc.forwards.length },
+            { name: "...systemd agrees",
+              run: () => shell("for u in " + ["P1", "P2", "L", "Q", "R"].map(unit).join(" ") + "; do systemctl --user is-active \"$u\" | grep -qx active && echo \"$u\"; done; true"),
+              until: () => shellResult !== null,
+              check: () => shellResult.out.trim() === "" ? "" : shellResult.out },
             { name: "local ports: test servers listed with name, project and scope",
               run: () => lp.poll(),
               until: () => lp.loaded && local(18850) && local(18851) && local(18852) && local(18853), timeout: 10000,

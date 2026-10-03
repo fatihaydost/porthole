@@ -10,7 +10,7 @@ const { execFileSync } = require("child_process");
 const src = fs.readFileSync(path.join(__dirname, "../package/contents/ui/logic.js"), "utf8")
     .replace(/^\.pragma library\s*$/m, "");
 const L = {};
-vm.runInNewContext(src + "\nObject.assign(out, {shellQuote, normalizeForward, parseStore, serializeStore, forwardTitle, unitName, forwardCommand, startScript, stopScript, pollScript, parsePoll, deriveStatus, errorKind, decodeBase64Utf8, readStoreScript, writeStoreScript, sshConfigScript, parseSshHosts, dependencyScript, richEscape, localPortsScript, splitAddress, addressScope, parseSsLine, processLabel, projectName, parseDockerPorts, parseLocalPorts, formatAddress, browseHost, killScript});", { out: L, Date });
+vm.runInNewContext(src + "\nObject.assign(out, {shellQuote, normalizeForward, parseStore, serializeStore, forwardTitle, unitName, forwardCommand, startScript, stopScript, pollScript, parsePoll, deriveStatus, errorKind, decodeBase64Utf8, readStoreScript, writeStoreScript, sshConfigScript, parseSshHosts, dependencyScript, richEscape, localPortsScript, splitAddress, addressScope, parseSsLine, processLabel, projectName, parseDockerPorts, parseLocalPorts, formatAddress, browseHost, killScript, normalizeBindAddress, canonicalIPv6, bindKey, listenAddressesOverlap, bindAddressesOverlap, forwardsConflict, isLoopbackBind, localAddress, browseAddress, LISTEN_SHELL});", { out: L, Date });
 
 let n = 0;
 function test(name, fn) {
@@ -35,7 +35,7 @@ test("normalizeForward applies the original's rules", () => {
     assert.strictEqual(L.normalizeForward({ localPort: "abc", sshTarget: "h" }, mk), null);
     assert.strictEqual(L.normalizeForward({ localPort: 3000, sshTarget: "  " }, mk), null);
     const f = L.normalizeForward({ id: " a b|c ", localPort: "3000", sshTarget: " foundry ", remotePort: -1, autostart: "true", label: " Web ", extraOptions: " -J x " }, mk);
-    assert.deepStrictEqual(JSON.parse(JSON.stringify(f)), { id: "a_b_c", label: "Web", localPort: 3000, sshTarget: "foundry", remoteHost: "localhost", remotePort: 3000, autostart: false, extraOptions: "-J x" });
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(f)), { id: "a_b_c", label: "Web", bindAddress: "", localPort: 3000, sshTarget: "foundry", remoteHost: "localhost", remotePort: 3000, autostart: false, extraOptions: "-J x" });
     const g = L.normalizeForward({ localPort: 8080, sshTarget: "h", remoteHost: "db", remotePort: 5432, autostart: true }, mk);
     assert.strictEqual(g.id, "gen1");
     assert.strictEqual(g.remoteHost, "db");
@@ -120,7 +120,9 @@ test("unit names are safe", () => {
 
 test("generated scripts parse with bash -n", () => {
     const f = { id: "a'b", localPort: 3000, sshTarget: "h'ost", remoteHost: "localhost", remotePort: 3000, extraOptions: "" };
+    const b = Object.assign({}, f, { bindAddress: "::1" });
     for (const s of [L.startScript(f, ["porthole-other"], true, "desc 'quoted'"), L.stopScript("a'b"), L.pollScript([f]), L.pollScript([]),
+        L.startScript(b, [], false, "d"), L.pollScript([f, b]),
         L.readStoreScript(), L.writeStoreScript("{\"a\": \"it's\"}\n"), L.sshConfigScript(), L.dependencyScript()]) {
         execFileSync("bash", ["-n", "-c", s]);
     }
@@ -485,6 +487,254 @@ test("killScript: TERM, refuses a reused pid, reports a survivor", () => {
     assert.strictEqual(bash(L.killScript(b.pid, startB, false)).trim(), "alive");
     assert.strictEqual(bash(L.killScript(b.pid, startB, true)).trim(), "gone");
     try { process.kill(-b.pid, "SIGKILL"); } catch (e) { /* already gone */ }
+});
+
+
+// --- bind address --------------------------------------------------------------
+
+test("bind address: accepted and refused shapes", () => {
+    const ok = {
+        "": "", "   ": "", " 127.0.1.1 ": "127.0.1.1", "0.0.0.0": "0.0.0.0", "255.255.255.255": "255.255.255.255",
+        "localhost": "localhost", "LocalHost": "localhost", "*": "*", "::": "::", "::1": "::1", "[::1]": "::1",
+        "[ ::1 ]": "::1", "FE80::1": "fe80::1", "2001:db8::42": "2001:db8::42", "::ffff:127.0.0.1": "::ffff:127.0.0.1",
+        "0:0:0:0:0:0:0:1": "0:0:0:0:0:0:0:1"
+    };
+    for (const k in ok)
+        assert.strictEqual(L.normalizeBindAddress(k), ok[k], k);
+    assert.strictEqual(L.normalizeBindAddress(undefined), "");
+    assert.strictEqual(L.normalizeBindAddress(null), "");
+    for (const bad of ["256.1.1.1", "01.2.3.4", "1.2.3", "1.2.3.4.5", "host.lan", "example.com", "[]", "[127.0.0.1]",
+            "[localhost]", "fe80::1%eth0", "1::2::3", ":::", "1:2:3:4:5:6:7:8:9", "127.0.0.1:3000", "**", "-oProxyCommand=x", "a b", 5, true])
+        assert.strictEqual(L.normalizeBindAddress(bad), null, String(bad));
+});
+
+test("bind address: IPv6 compared in the form ss prints", () => {
+    const cases = { "0:0:0:0:0:0:0:1": "::1", "::": "::", "FE80:0:0:0:0:0:0:1": "fe80::1", "1:0:0:2:0:0:0:3": "1:0:0:2::3",
+        "1:0:0:0:2:0:0:3": "1::2:0:0:3", "1:0:2:3:4:5:6:7": "1:0:2:3:4:5:6:7", "2001:db8::": "2001:db8::",
+        "::ffff:7f00:1": "::ffff:127.0.0.1", "1:2:3:4:5:6:1.2.3.4": "1:2:3:4:5:6:102:304" };
+    for (const k in cases)
+        assert.strictEqual(L.canonicalIPv6(k), cases[k], k);
+    assert.strictEqual(L.bindKey("[0:0::1]"), "::1");
+    assert.strictEqual(L.bindKey("localhost"), "");
+    assert.strictEqual(L.bindKey(""), "");
+    assert.strictEqual(L.bindKey("127.0.1.1"), "127.0.1.1");
+});
+
+test("bind address: store round trip, old files and their ids unchanged", () => {
+    // a file written before bind addresses: read as is, ids derived exactly as
+    // 0.1.0 derived them (running units keep their names)
+    const old = JSON.stringify({ version: 1, forwards: [{ localPort: 8080, sshTarget: "web" },
+        { label: "DB", localPort: 5432, sshTarget: "db", remoteHost: "10.0.0.5", remotePort: 5432 }] });
+    const r = L.parseStore(old);
+    assert.deepStrictEqual(Array.from(r.forwards.map(f => f.id)), ["hksph4d", "hkrc0np"]);
+    assert.deepStrictEqual(Array.from(r.forwards.map(f => f.bindAddress)), ["", ""]);
+    assert.strictEqual(r.invalid.length, 0);
+    // saved the way every known field is saved, then read back the same
+    const text = L.serializeStore(r.forwards, r.extras, r.invalid, r.top);
+    assert.strictEqual(JSON.parse(text).forwards[0].bindAddress, "");
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(L.parseStore(text).forwards)), JSON.parse(JSON.stringify(r.forwards)));
+    // set addresses: normalised on load, written back, identical on the next load
+    const withBind = JSON.stringify({ version: 1, forwards: [
+        { id: "a", bindAddress: " 127.0.1.1 ", localPort: 3000, sshTarget: "a" },
+        { id: "b", bindAddress: "[::1]", localPort: 3000, sshTarget: "b" },
+        { id: "c", bindAddress: "box.lan", localPort: 3000, sshTarget: "c", comment: "kept" },
+        { localPort: 8080, sshTarget: "web", bindAddress: "127.0.1.2" }] });
+    const w = L.parseStore(withBind);
+    assert.deepStrictEqual(Array.from(w.forwards.map(f => f.bindAddress)), ["127.0.1.1", "::1", "127.0.1.2"]);
+    // a bind address changes the derived id (two entries otherwise alike)
+    assert.notStrictEqual(w.forwards[2].id, "hksph4d");
+    // an address that is not one: refused like any unreadable entry, kept verbatim
+    assert.strictEqual(w.invalid.length, 1);
+    const back = JSON.parse(L.serializeStore(w.forwards, w.extras, w.invalid, w.top));
+    assert.deepStrictEqual(back.forwards[2], { id: "c", bindAddress: "box.lan", localPort: 3000, sshTarget: "c", comment: "kept" });
+    assert.strictEqual(back.forwards[0].bindAddress, "127.0.1.1");
+    assert.strictEqual(back.forwards[1].bindAddress, "::1");
+    const again = L.parseStore(JSON.stringify(back));
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(again.forwards)), JSON.parse(JSON.stringify(w.forwards)));
+});
+
+test("bind address: the -L spec; without one, byte for byte the old spec", () => {
+    const f = { localPort: 3000, sshTarget: "foundry", remoteHost: "", remotePort: 3001, extraOptions: "" };
+    const spec = b => { const c = Array.from(L.forwardCommand(Object.assign({}, f, b === undefined ? {} : { bindAddress: b }), false)); return c[c.indexOf("-L") + 1]; };
+    // regression: no field, empty, blank
+    for (const b of [undefined, "", "   ", null])
+        assert.strictEqual(spec(b), "3000:localhost:3001", String(b));
+    assert.deepStrictEqual(Array.from(L.forwardCommand(Object.assign({}, f, { bindAddress: "" }), false)), Array.from(L.forwardCommand(f, false)));
+    assert.strictEqual(spec("127.0.1.1"), "127.0.1.1:3000:localhost:3001");
+    assert.strictEqual(spec("localhost"), "localhost:3000:localhost:3001");
+    assert.strictEqual(spec("0.0.0.0"), "0.0.0.0:3000:localhost:3001");
+    assert.strictEqual(spec("*"), "*:3000:localhost:3001");
+    assert.strictEqual(spec("::1"), "[::1]:3000:localhost:3001");
+    assert.strictEqual(spec("[fe80::1]"), "[fe80::1]:3000:localhost:3001");
+    assert.strictEqual(spec("::"), "[::]:3000:localhost:3001");
+    // through startScript and bash: "*" stays one literal argument
+    const fakeBin = fs.mkdtempSync("/tmp/pf-fake-");
+    for (const name of ["systemctl", "ss", "gpgconf"])
+        fs.writeFileSync(path.join(fakeBin, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const run = b => bash(L.startScript(Object.assign({ id: "t" }, f, { bindAddress: b }), [], false, "d").replace("exec systemd-run", "exec printf '[%s]'"),
+        { PATH: fakeBin + ":/usr/bin", XDG_RUNTIME_DIR: fakeBin, SSH_AUTH_SOCK: "" });
+    assert.ok(run("*").includes("[-L][*:3000:localhost:3001][--][foundry]"));
+    assert.ok(run("::1").includes("[-L][[::1]:3000:localhost:3001]"));
+    assert.ok(run("").includes("[-L][3000:localhost:3001]"));
+    fs.rmSync(fakeBin, { recursive: true });
+});
+
+test("bind address: conflict matrix", () => {
+    const yes = [["", ""], ["", "localhost"], ["", "127.0.0.1"], ["", "::1"], ["", "[0:0::1]"], ["localhost", "127.0.0.1"],
+        ["127.0.1.1", "127.0.1.1"], ["0.0.0.0", "127.0.1.1"], ["0.0.0.0", ""], ["0.0.0.0", "192.168.1.5"], ["0.0.0.0", "0.0.0.0"],
+        ["*", "::1"], ["*", "127.0.1.1"], ["*", ""], ["::", "127.0.1.1"], ["::", "::1"], ["::", ""], ["::", "0.0.0.0"], ["*", "::"],
+        ["fe80::1", "FE80:0:0:0:0:0:0:1"]];
+    const no = [["127.0.1.1", "127.0.1.2"], ["", "127.0.1.1"], ["localhost", "127.0.1.2"], ["", "192.168.1.5"],
+        ["0.0.0.0", "::1"], ["0.0.0.0", "fe80::1"], ["127.0.0.1", "::1"], ["::1", "fe80::1"], ["192.168.1.5", "10.0.0.1"]];
+    for (const [a, b] of yes) {
+        assert.strictEqual(L.bindAddressesOverlap(a, b), true, a + " / " + b);
+        assert.strictEqual(L.bindAddressesOverlap(b, a), true, b + " / " + a);
+    }
+    for (const [a, b] of no) {
+        assert.strictEqual(L.bindAddressesOverlap(a, b), false, a + " / " + b);
+        assert.strictEqual(L.bindAddressesOverlap(b, a), false, b + " / " + a);
+    }
+    // forwards: the port has to match too; missing fields are the default
+    const fw = (port, bind) => ({ localPort: port, bindAddress: bind });
+    assert.strictEqual(L.forwardsConflict(fw(3000, "127.0.1.1"), fw(3000, "127.0.1.2")), false);
+    assert.strictEqual(L.forwardsConflict(fw(3000, "127.0.1.1"), fw(3001, "127.0.1.1")), false);
+    assert.strictEqual(L.forwardsConflict(fw(3000, "127.0.1.1"), fw(3000, "127.0.1.1")), true);
+    assert.strictEqual(L.forwardsConflict({ localPort: 3000 }, { localPort: 3000 }), true);
+    assert.strictEqual(L.forwardsConflict({ localPort: 3000 }, fw(3000, "0.0.0.0")), true);
+});
+
+test("bind address: the shell's overlap check agrees with the JS one", () => {
+    // every listener shape ss prints against every bind key
+    const hosts = ["127.0.0.1", "::1", "127.0.1.1", "127.0.1.2", "0.0.0.0", "*", "::", "192.168.1.5", "fe80::1"];
+    const binds = ["", "127.0.0.1", "::1", "127.0.1.1", "0.0.0.0", "*", "::", "192.168.1.5", "fe80::1"];
+    let script = L.LISTEN_SHELL;
+    for (const h of hosts)
+        for (const b of binds)
+            script += "ov " + L.shellQuote(h) + " " + L.shellQuote(b) + " && echo 1 || echo 0; ";
+    const shell = bash(script).trim().split("\n");
+    let i = 0;
+    for (const h of hosts)
+        for (const b of binds) {
+            const js = b === "" ? L.listenAddressesOverlap(h, "127.0.0.1") || L.listenAddressesOverlap(h, "::1") : L.listenAddressesOverlap(h, b);
+            assert.strictEqual(shell[i++], js ? "1" : "0", h + " vs " + JSON.stringify(b));
+        }
+    // and lhost reads every ss address column shape
+    const cols = { "127.0.0.1:5180": "127.0.0.1", "[::1]:631": "::1", "*:3000": "*", "[::]:22": "::", "127.0.0.53%lo:53": "127.0.0.53", "[fe80::1%wlan0]:22": "fe80::1" };
+    for (const c in cols)
+        assert.strictEqual(bash(L.LISTEN_SHELL + "lhost " + L.shellQuote(c)), cols[c], c);
+});
+
+test("bind address: status per address, never mixed between tunnels on one port", () => {
+    // pids: 1xx are the tunnels' ssh, 9xx other programs
+    const fakeBin = fs.mkdtempSync("/tmp/pf-fake-");
+    const fake = (name, body) => fs.writeFileSync(path.join(fakeBin, name), "#!/bin/bash\n" + body + "\n", { mode: 0o755 });
+    const ss = [
+        // 5001: two tunnels on two loopback addresses, a stranger on a third
+        'LISTEN 0 128 127.0.1.1:5001 0.0.0.0:* users:(("ssh",pid=100,fd=4))',
+        'LISTEN 0 128 127.0.1.2:5001 0.0.0.0:* users:(("ssh",pid=101,fd=4))',
+        'LISTEN 0 5 127.0.1.3:5001 0.0.0.0:* users:(("python3",pid=900,fd=3))',
+        // 5002: a stranger on 127.0.1.1 too (SO_REUSEPORT): only that tunnel warns
+        'LISTEN 0 128 127.0.1.1:5002 0.0.0.0:* users:(("ssh",pid=102,fd=4))',
+        'LISTEN 0 5 127.0.1.1:5002 0.0.0.0:* users:(("python3",pid=901,fd=3))',
+        'LISTEN 0 128 127.0.1.2:5002 0.0.0.0:* users:(("ssh",pid=103,fd=4))',
+        // 5003: a stranger on every IPv4 address
+        'LISTEN 0 5 0.0.0.0:5003 0.0.0.0:* users:(("python3",pid=902,fd=3))',
+        'LISTEN 0 128 127.0.1.5:5003 0.0.0.0:* users:(("ssh",pid=104,fd=4))',
+        'LISTEN 0 128 [::1]:5003 [::]:* users:(("ssh",pid=105,fd=4))',
+        // 5005: the default address, a stranger on 127.0.1.1 does not count
+        'LISTEN 0 128 127.0.0.1:5005 0.0.0.0:* users:(("ssh",pid=106,fd=4))',
+        'LISTEN 0 128 [::1]:5005 [::]:* users:(("ssh",pid=106,fd=5))',
+        'LISTEN 0 5 127.0.1.1:5005 0.0.0.0:* users:(("python3",pid=903,fd=3))',
+        // 5006: the default address, 127.0.0.1 taken: shared, as before
+        'LISTEN 0 128 [::1]:5006 [::]:* users:(("ssh",pid=107,fd=4))',
+        'LISTEN 0 5 127.0.0.1:5006 0.0.0.0:* users:(("python3",pid=904,fd=3))',
+        // 5008: an IPv6 bind written long-hand, ss prints it short
+        'LISTEN 0 128 [::1]:5008 [::]:* users:(("ssh",pid=108,fd=4))',
+        'LISTEN 0 5 [::1]:5008 [::]:* users:(("python3",pid=905,fd=3))',
+        // 50010 must not be read as port 5001
+        'LISTEN 0 5 127.0.1.1:50010 0.0.0.0:* users:(("python3",pid=906,fd=3))',
+    ];
+    fake("ss", "cat <<\"EOF\"\n" + ss.join("\n") + "\nEOF");
+    const pids = { a: 100, b: 101, c: 102, d: 103, e: 104, f: 105, g: 106, h: 107, k: 108, x: 0 };
+    let sc = 'u="${@: -1}"\ncase "$*" in\n*is-active*) echo active;;\n*InvocationID*) echo "inv-$u";;\n';
+    for (const id in pids)
+        sc += "*MainPID*porthole-" + id + ") echo " + pids[id] + ";;\n";
+    fake("systemctl", sc + "esac");
+    fake("journalctl", "true");
+    fake("stat", "echo 1.2.3");
+    const fw = [
+        { id: "a", localPort: 5001, bindAddress: "127.0.1.1" }, { id: "b", localPort: 5001, bindAddress: "127.0.1.2" },
+        { id: "c", localPort: 5002, bindAddress: "127.0.1.1" }, { id: "d", localPort: 5002, bindAddress: "127.0.1.2" },
+        { id: "e", localPort: 5003, bindAddress: "127.0.1.5" }, { id: "f", localPort: 5003, bindAddress: "::1" },
+        { id: "g", localPort: 5005 }, { id: "h", localPort: 5006, bindAddress: "" },
+        { id: "k", localPort: 5008, bindAddress: "0:0:0:0:0:0:0:1" },
+        // nothing of its own listening; strangers elsewhere on the port do not make it active
+        { id: "x", localPort: 5001, bindAddress: "127.0.1.9" }];
+    const p = L.parsePoll(bash(L.pollScript(fw, {}), { PATH: fakeBin + ":/usr/bin" }));
+    const got = {};
+    p.rows.forEach(r => { got[r.id] = r.listen; });
+    assert.deepStrictEqual(got, { a: "yes", b: "yes", c: "shared", d: "yes", e: "shared", f: "yes", g: "yes", h: "shared", k: "shared", x: "no" });
+    assert.strictEqual(L.deriveStatus(p.rows[9]), "connecting");
+    fs.rmSync(fakeBin, { recursive: true });
+});
+
+test("bind address: start waits only for listeners on its own address", () => {
+    // a listener that never goes away on 127.0.1.1:4100
+    const fakeBin = fs.mkdtempSync("/tmp/pf-fake-");
+    fs.writeFileSync(path.join(fakeBin, "ss"), "#!/bin/sh\necho 'LISTEN 0 128 127.0.1.1:4100 0.0.0.0:*'\n", { mode: 0o755 });
+    for (const name of ["systemctl", "gpgconf"])
+        fs.writeFileSync(path.join(fakeBin, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const took = b => {
+        const s = L.startScript({ id: "w", localPort: 4100, bindAddress: b, sshTarget: "h", remoteHost: "", remotePort: 1, extraOptions: "" }, [], false, "d")
+            .replace("exec systemd-run", "exec true");
+        const t0 = Date.now();
+        bash(s, { PATH: fakeBin + ":/usr/bin", XDG_RUNTIME_DIR: fakeBin });
+        return Date.now() - t0;
+    };
+    assert.ok(took("127.0.1.2") < 1500, "waited for a listener on another address");
+    assert.ok(took("") < 1500, "the default address waited for 127.0.1.1");
+    assert.ok(took("0.0.0.0") >= 3500, "did not wait for a listener on its own address");
+    fs.rmSync(fakeBin, { recursive: true });
+});
+
+test("bind address: shown, copied and opened", () => {
+    const f = b => ({ localPort: 3000, bindAddress: b });
+    const rows = [
+        [undefined, "localhost:3000", "localhost:3000"], ["", "localhost:3000", "localhost:3000"],
+        ["localhost", "localhost:3000", "localhost:3000"], ["127.0.1.1", "127.0.1.1:3000", "127.0.1.1:3000"],
+        ["::1", "[::1]:3000", "[::1]:3000"], ["192.168.1.5", "192.168.1.5:3000", "192.168.1.5:3000"],
+        ["0.0.0.0", "0.0.0.0:3000", "localhost:3000"], ["*", "*:3000", "localhost:3000"], ["::", "[::]:3000", "localhost:3000"],
+        ["0:0:0:0:0:0:0:0", "[0:0:0:0:0:0:0:0]:3000", "localhost:3000"]];
+    for (const [b, shown, browse] of rows) {
+        assert.strictEqual(L.localAddress(f(b)), shown, String(b));
+        assert.strictEqual(L.browseAddress(f(b)), browse, String(b));
+    }
+    for (const b of ["", "localhost", "127.0.0.1", "127.0.1.1", "127.255.255.254", "::1", "::ffff:127.0.0.1"])
+        assert.strictEqual(L.isLoopbackBind(b), true, b);
+    for (const b of ["0.0.0.0", "*", "::", "192.168.1.5", "10.0.0.1", "fe80::1", "128.0.0.1"])
+        assert.strictEqual(L.isLoopbackBind(b), false, b);
+});
+
+test("local ports: tunnels on several addresses of one port stay out, a server on another address shows", () => {
+    const b = s => Buffer.from(s).toString("base64");
+    const r = L.parseLocalPorts([
+        "@home " + b("/home/u"),
+        '@l LISTEN 0 128 127.0.1.1:3000 0.0.0.0:* users:(("ssh",pid=300,fd=4))',
+        '@l LISTEN 0 128 127.0.1.2:3000 0.0.0.0:* users:(("ssh",pid=301,fd=4))',
+        '@l LISTEN 0 5 127.0.1.3:3000 0.0.0.0:* users:(("python3",pid=302,fd=3))',
+        "@p 300 yes 1 1 " + b("ssh\n-N\n") + " " + b("/"),
+        "@p 301 yes 1 2 " + b("ssh\n-N\n") + " " + b("/"),
+        "@p 302 no 1 3 " + b("python3\n-m\nhttp.server\n") + " " + b("/home/u/Projects/site"),
+    ].join("\n"));
+    assert.strictEqual(r.entries.length, 1);
+    assert.deepStrictEqual(Array.from(r.entries[0].hosts), ["127.0.1.3"]);
+    assert.strictEqual(r.entries[0].pid, 302);
+    // localhost does not reach 127.0.1.3: the browser goes to the address itself
+    assert.strictEqual(L.browseHost(r.entries[0]), "127.0.1.3");
+    assert.strictEqual(L.browseHost({ scope: "loopback", hosts: ["127.0.0.1", "::1"] }), "localhost");
+    assert.strictEqual(L.browseHost({ scope: "loopback", hosts: ["::1"] }), "localhost");
+    assert.strictEqual(L.browseHost({ scope: "loopback", hosts: ["fd00::1"] }), "[fd00::1]");
+    assert.strictEqual(L.browseHost({ scope: "all", hosts: ["0.0.0.0"] }), "localhost");
 });
 
 console.log(`all ${n} tests passed`);
