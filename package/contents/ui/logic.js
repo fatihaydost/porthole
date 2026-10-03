@@ -442,7 +442,7 @@ var AGENT_SHELL =
 // `ov` is listenAddressesOverlap with the bind key "" standing for
 // 127.0.0.1 and ::1 (see bindAddressesOverlap).
 var LISTEN_SHELL =
-    'lhost() { local a="${1%:*}"; a="${a#[}"; a="${a%]}"; printf %s "${a%%\\%*}"; }; ' +
+    'lhost() { local a="${1%:*}"; a="${a%%\\%*}"; a="${a#[}"; printf %s "${a%]}"; }; ' +
     'ov() { case "$1" in "*") return 0;; esac; ' +
     'case "$2" in "*") return 0;; "") case "$1" in 127.0.0.1|::1|0.0.0.0|::) return 0;; esac; return 1;; esac; ' +
     '[ "$1" = "$2" ] && return 0; ' +
@@ -747,7 +747,8 @@ function localPortsScript() {
 }
 
 // Splits an ss address column ("127.0.0.1:5180", "[::1]:631", "*:3000",
-// "127.0.0.53%lo:53", "[fe80::1%wlan0]:22") into host and port.
+// "127.0.0.53%lo:53", "[fe80::1]%wlan0:22": ss puts the interface after the
+// bracket) into host and port.
 function splitAddress(text) {
     var s = String(text || "");
     var colon = s.lastIndexOf(":");
@@ -757,11 +758,11 @@ function splitAddress(text) {
     if (!isFinite(port))
         return null;
     var host = s.slice(0, colon);
-    if (host.charAt(0) === "[" && host.charAt(host.length - 1) === "]")
-        host = host.slice(1, -1);
     var pct = host.indexOf("%");
     if (pct >= 0)
         host = host.slice(0, pct);
+    if (host.charAt(0) === "[" && host.charAt(host.length - 1) === "]")
+        host = host.slice(1, -1);
     return { host: host, port: port };
 }
 

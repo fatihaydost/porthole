@@ -310,8 +310,11 @@ test("ss lines: IPv4, IPv6, wildcard, scope suffixes, no/many users", () => {
     assert.strictEqual(c.host, "*"); assert.strictEqual(c.scope, "all"); assert.strictEqual(c.procs[0].name, "next-server (v1");
     const d = L.parseSsLine("LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*");
     assert.strictEqual(d.host, "127.0.0.53"); assert.strictEqual(d.port, 53); assert.strictEqual(d.scope, "loopback");
-    const e = L.parseSsLine("LISTEN 0 128 [fe80::1%wlan0]:22 [::]:*");
-    assert.strictEqual(e.host, "fe80::1"); assert.strictEqual(e.scope, "lan");
+    // the interface comes after the bracket, as ss prints it
+    const e = L.parseSsLine("LISTEN 0 128 [fe80::1]%wlan0:22 [::]:*");
+    assert.strictEqual(e.host, "fe80::1"); assert.strictEqual(e.port, 22); assert.strictEqual(e.scope, "lan");
+    const e2 = L.parseSsLine("LISTEN 0 128 [::1]%lo:3000 [::]:*");
+    assert.strictEqual(e2.host, "::1"); assert.strictEqual(e2.scope, "loopback");
     const f = L.parseSsLine('LISTEN 0 128 0.0.0.0:8000 0.0.0.0:* users:(("gunicorn",pid=10,fd=5),("gunicorn",pid=11,fd=5),("gunicorn",pid=12,fd=5))');
     assert.deepStrictEqual(Array.from(f.procs.map(x => x.pid)), [10, 11, 12]); assert.strictEqual(f.scope, "all");
     assert.strictEqual(L.parseSsLine("LISTEN 0 4096 [::]:5355 [::]:*").scope, "all");
@@ -631,7 +634,8 @@ test("bind address: the shell's overlap check agrees with the JS one", () => {
         assert.strictEqual(js ? 1 : 0, want, "js " + h + " vs " + JSON.stringify(b));
     }
     // and lhost reads every ss address column shape
-    const cols = { "127.0.0.1:5180": "127.0.0.1", "[::1]:631": "::1", "*:3000": "*", "[::]:22": "::", "127.0.0.53%lo:53": "127.0.0.53", "[fe80::1%wlan0]:22": "fe80::1" };
+    const cols = { "127.0.0.1:5180": "127.0.0.1", "[::1]:631": "::1", "*:3000": "*", "[::]:22": "::", "127.0.0.53%lo:53": "127.0.0.53",
+        "[fe80::1]%wlan0:22": "fe80::1", "[::1]%lo:3000": "::1", "[fe80::a1af:3e26:e805:e4f6]%enp48s0:546": "fe80::a1af:3e26:e805:e4f6" };
     for (const c in cols)
         assert.strictEqual(bash(L.LISTEN_SHELL + "lhost " + L.shellQuote(c)), cols[c], c);
 });
